@@ -2,17 +2,31 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-//http://www.kfish.org/boids/pseudocode.html
-// Yes i know, grabbing the rigidbody every time isnt efficient
+//http://www.kfish.org/boids/pseudocode.html, programmed by Tymon Versmoren
 public class Boids : MonoBehaviour
 {
+    [Header("Vars to change")]
+    [Tooltip("Speed of all boids")]
     public float speed = 1;
+    [Tooltip("Limit the boids velocities")]
     public float limitSpeed = 4;
+    [Tooltip("Stimulation of wind")]
     public Vector3 wind = Vector3.zero;
-    public Transform target1;
-    public int Xmin, Xmax, Ymin, Ymax, Zmin, Zmax;
 
-    public GameObject[] boids;
+    public int groundLevel = -10;
+    [Header("Bounding box")]
+    public int Xmin = -20;
+    public int Xmax = 20;
+    public int Ymin = -20;
+    public int Ymax = 20;
+    public int Zmin = -20;
+    public int Zmax = 20;
+
+    [Header("Components")]
+    [Tooltip("Target of boids to go towords")]
+    public Transform target1;
+
+    private List<Boid> boids = new List<Boid>();
 
     // Start is called before the first frame update
     void Start()
@@ -31,25 +45,51 @@ public class Boids : MonoBehaviour
     /// </summary>
     private void SetBoidsStartPositions()
     {
-
+        for(int i = 0; i < 100; i++)
+        {
+            boids.Add(new Boid());
+            boids[i].position = new Vector3(Random.Range(Xmin, Xmax), Random.Range(Ymin, Ymax), Random.Range(Zmin, Zmax));
+        }
     }
 
     private void MoveBoidsToNewPosition()
     {
-        Vector3 v1, v2, v3, v4, vTTP;
+        Vector3 velocity, v1, v2, v3, vTTP, boundPos;
 
-        foreach(GameObject b in boids)
+        foreach(Boid b in boids)
         {
+            // Check isPerching
+            if(b.isPerching)
+            {
+                if(b.perchTimer > 0)
+                {
+                    b.perchTimer -= Time.deltaTime;
+                }
+                else
+                {
+                    b.isPerching = false;
+                    b.velocity = Vector3.up;
+                    b.perchTimerCooldown = Random.Range(3, 6);
+                }
+                continue;
+            }
+            b.perchTimerCooldown -= Time.deltaTime;
+
+            // Apply rules
             v1 = Rule1(b);
             v2 = Rule2(b);
             v3 = Rule3(b);
-            v4 = Rule4(b);
             vTTP = TendencyTowordsPlace(b);
-            
+            boundPos = BoundPosition(b);
 
-            b.GetComponent<Rigidbody>().velocity = (b.GetComponent<Rigidbody>().velocity + v1 + v2 + v3 + wind + vTTP + BoundPosition(b)) * Time.deltaTime * speed;
+            // Set velocity of boid
+            velocity = v1 + v2 + v3 + vTTP + boundPos + wind;
+            // Limit velocity
             LimitVelocity(b);
-            b.transform.position = (b.transform.position + b.GetComponent<Rigidbody>().velocity);
+
+            // Add velocity to position
+            b.velocity += velocity;
+            b.position = Vector3.MoveTowards(b.position, b.position + b.velocity, Time.deltaTime * speed);
         }
     }
 
@@ -58,123 +98,141 @@ public class Boids : MonoBehaviour
     /// </summary>
     /// <param name="b"></param>
     /// <returns></returns>
-    private Vector3 Rule1(GameObject b)
+    private Vector3 Rule1(Boid b)
     {
-        // Center of mass
-        //Vector3 c = Vector3.zero;
-        //foreach(GameObject bb in boids)
-        //{
-        //    c += bb.transform.position;
-        //}
-        //c = c / boids.Length;
-        //print(c);
-
         // Perceived center (center of all other boids not including itself)
         Vector3 pcj = Vector3.zero;
-        foreach(GameObject bb in boids)
+        int i = 0; // amount of boids not perching
+        foreach(Boid item in boids)
         {
-            if(bb != b)
+            if(item != b || !item.isPerching)
             {
-                pcj = pcj + bb.transform.position;
+                i++;
+                pcj = pcj + item.position;
             }
         }
-        pcj = pcj / (boids.Length - 1);
+        pcj = pcj / (i - 1);
         //print(pcj);
 
-        return (pcj - b.transform.position) / 100; // move it 1% towords center
+        return (pcj - b.position) / 100; /// 100; add weight // move it 1% towords center
     }
 
-    // Keep a small distance away from other objects (including other boids)
-    private Vector3 Rule2(GameObject b)
+    /// <summary>
+    /// Keep away from other boids
+    /// </summary>
+    /// <param name="b"></param>
+    /// <returns></returns>
+    private Vector3 Rule2(Boid b)
     {
         Vector3 c = Vector3.zero;
-        foreach(GameObject bb in boids)
+        foreach(Boid item in boids)
         {
-            if(bb != b)
+            if(item != b)
             {
                 // Check if it is too close
-                if(Vector3.Distance(bb.transform.position, b.transform.position) < 3)
+                if(Vector3.Distance(item.position, b.position) < 4) //Vector3.Distance(item.position, b.position
                 {
-                    c = c - (bb.transform.position - b.transform.position);
+                    c = c - (item.position - b.position);
                 }
             }
         }
-
         return c;
     }
 
-    // Try to match velocity with other boids
-    private Vector3 Rule3(GameObject b)
+    /// <summary>
+    /// Match velocity with other boids
+    /// </summary>
+    /// <param name="b"></param>
+    /// <returns></returns>
+    private Vector3 Rule3(Boid b)
     {
         // Perceived velocity
         Vector3 pvj = Vector3.zero;
-        foreach(GameObject bb in boids)
+        foreach(Boid item in boids)
         {
-            if(bb != b)
+            if(item != b)
             {
-                pvj = pvj + bb.GetComponent<Rigidbody>().velocity;
+                pvj = pvj + item.velocity;
             }
         }
-        pvj = pvj / (boids.Length - 1);
+        pvj = pvj / (float)(boids.Count - 1);
 
-        return (pvj - b.GetComponent<Rigidbody>().velocity) / 8; // add a small portion (1/8) to the boids current velocity
+        return (pvj - b.velocity) / 8; // add a small portion (1/8) to the boids current velocity
     }
 
-    private Vector3 Rule4(GameObject b)
+    /// <summary>
+    /// Move towords the target position
+    /// </summary>
+    /// <param name="b"></param>
+    /// <returns></returns>
+    private Vector3 TendencyTowordsPlace(Boid b)
     {
-        return Vector3.zero;
+        return (target1.position - b.position) / 100;
     }
 
-    private Vector3 TendencyTowordsPlace(GameObject b)
+    /// <summary>
+    /// Limit the velocity of the boid
+    /// </summary>
+    /// <param name="b"></param>
+    private void LimitVelocity(Boid b)
     {
-        return (target1.position - b.transform.position) / 100;
-    }
-
-    private void LimitVelocity(GameObject b)
-    {
-        if(b.GetComponent<Rigidbody>().velocity.sqrMagnitude > limitSpeed)
+        if(b.velocity.sqrMagnitude > limitSpeed)
         {
-            b.GetComponent<Rigidbody>().velocity = (b.GetComponent<Rigidbody>().velocity / b.GetComponent<Rigidbody>().velocity.magnitude) * limitSpeed;
+            b.velocity = (b.velocity / b.velocity.magnitude) * limitSpeed;
         }
     }
 
-    // Kinda works, boids go outside the border a bit but dont go futer
-    private Vector3 BoundPosition(GameObject b)
+    /// <summary>
+    /// Bound the boids in a box
+    /// </summary>
+    /// <param name="b"></param>
+    /// <returns></returns>
+    private Vector3 BoundPosition(Boid b)
     {
         Vector3 v = Vector3.zero;
         float f = 10;
 
-        if(b.transform.position.x < Xmin)
+        if(b.position.x < Xmin)
         {
             v.x = f;
         }
-        else if(b.transform.position.x > Xmax)
+        else if(b.position.x > Xmax)
         {
             v.x = -f;
         }
 
-        if(b.transform.position.y < Ymin)
+        if(b.position.y < Ymin)
         {
             v.y = f;
         }
-        else if(b.transform.position.y > Ymax)
+        else if(b.position.y > Ymax)
         {
             v.y = -f;
         }
 
-        if(b.transform.position.z < Zmin)
+        if(b.position.z < Zmin)
         {
             v.z = f;
         }
-        else if(b.transform.position.z > Zmax)
+        else if(b.position.z > Zmax)
         {
             v.z = -f;
         }
-        print(v);
+        
+        // Apply perch rule
+        if(b.position.y < groundLevel && b.perchTimerCooldown <= 0)
+        {
+            b.position.y = groundLevel;
+            b.isPerching = true;
+            b.perchTimer = Random.Range(2, 4);
+        }
+
         return v;
     }
 
-    // Not implemented, do in future, cause i am interested in this stuff
+    /// <summary>
+    /// Make bird eat food on ground
+    /// </summary>
     private void Perching()
     {
         /*
@@ -340,9 +398,26 @@ Of course if you're doing this in two dimensions you won't need the z-axis terms
 
     private void OnDrawGizmos()
     {
-        Gizmos.color = Color.red;
+        Gizmos.color = Color.blue;
         Gizmos.DrawCube(new Vector3(0, 0, 0), new Vector3(Xmin - 10, Ymin - 10, Zmin - 10));
-        Gizmos.color = Color.green;
+
+        Gizmos.color = Color.red;
         Gizmos.DrawWireSphere(target1.position, 1);
+
+        if(!Application.isPlaying) return;
+        foreach(Boid item in boids)
+        {
+            if(item.isPerching) Gizmos.color = Color.yellow; else Gizmos.color = Color.magenta;
+            Gizmos.DrawSphere(item.position, 1);
+        }
     }
+}
+
+public class Boid
+{
+    public Vector3 position;
+    public Vector3 velocity = new Vector3(Random.value, Random.value, Random.value);
+    public bool isPerching = false;
+    public float perchTimer;
+    public float perchTimerCooldown;
 }
