@@ -5,6 +5,17 @@ using UnityEngine;
 //http://www.kfish.org/boids/pseudocode.html, programmed by Tymon Versmoren
 public class Boids : MonoBehaviour
 {
+    [Header("Values to play with")]
+    [Tooltip("Boid attraction to center of mass")]
+    [Range(-1, 1)]
+    public float m1 = 1;
+    [Tooltip("Boid avoidance of other boids")]
+    [Range(-1, 1)]
+    public float m2 = 1;
+    [Tooltip("Boid matching velocity of other boids")]
+    [Range(-1, 1)]
+    public float m3 = 1;
+
     [Header("Vars to change")]
     [Tooltip("Speed of all boids")]
     public float speed = 1;
@@ -12,7 +23,9 @@ public class Boids : MonoBehaviour
     public float limitSpeed = 4;
     [Tooltip("Stimulation of wind")]
     public Vector3 wind = Vector3.zero;
-
+    [Tooltip("Draw the gizmos too")]
+    public bool drawGizmos = false;
+    [Tooltip("Y axis value where boids will perch")]
     public int groundLevel = -10;
     [Header("Bounding box")]
     public int Xmin = -20;
@@ -25,6 +38,8 @@ public class Boids : MonoBehaviour
     [Header("Components")]
     [Tooltip("Target of boids to go towords")]
     public Transform target1;
+    [Tooltip("The boid to spawn")]
+    public GameObject boidPrefab;
 
     private List<Boid> boids = new List<Boid>();
 
@@ -49,9 +64,13 @@ public class Boids : MonoBehaviour
         {
             boids.Add(new Boid());
             boids[i].position = new Vector3(Random.Range(Xmin, Xmax), Random.Range(Ymin, Ymax), Random.Range(Zmin, Zmax));
+            boids[i].boidPrefab = Instantiate(boidPrefab, boids[i].position, Quaternion.identity);
         }
     }
 
+    /// <summary>
+    /// This updates all boids
+    /// </summary>
     private void MoveBoidsToNewPosition()
     {
         Vector3 velocity, v1, v2, v3, vTTP, boundPos;
@@ -76,9 +95,9 @@ public class Boids : MonoBehaviour
             b.perchTimerCooldown -= Time.deltaTime;
 
             // Apply rules
-            v1 = Rule1(b);
-            v2 = Rule2(b);
-            v3 = Rule3(b);
+            v1 = m1 * Rule1(b);
+            v2 = m2 * Rule2(b);
+            v3 = m3 * Rule3(b);
             vTTP = TendencyTowordsPlace(b);
             boundPos = BoundPosition(b);
 
@@ -90,6 +109,7 @@ public class Boids : MonoBehaviour
             // Add velocity to position
             b.velocity += velocity;
             b.position = Vector3.MoveTowards(b.position, b.position + b.velocity, Time.deltaTime * speed);
+            b.boidPrefab.transform.position = b.position;
         }
     }
 
@@ -296,108 +316,14 @@ A detail I implement here is that the lower bound for the boids' motion is actua
 
     private void AntiFlock()
     {
-        /*
-         * Anti-flocking behaviour
-
-During the course of a simulation, one may want to break up the flock for various reasons. For example the introduction of a predator may cause the flock to scatter in all directions.
-
-Scattering the flock
-
-Here we simply want the flock to disperse; they are not necessarily moving away from any particular object, we just want to break the cohesion (for example, the flock is startled by a loud noise). Thus we actually want to negate part of the influence of the boids rules.
-
-Of the three rules, it turns out we only want to negate the first one (moving towards the centre of mass of neighbours) -- ie. we want to make the boids move away from the centre of mass. As for the other rules: negating the second rule (avoiding nearby objects) will simply cause the boids to actively run into each other, and negating the third rule (matching velocity with nearby boids) will introduce a semi-chaotic oscillation.
-
-It is a good idea to use non-constant multipliers for each of the rules, allowing you to vary the influence of each rule over the course of the simulation. If you put these multipliers in the move_all_boids_to_new_positions procedure, ending up with something like:
-
-        PROCEDURE move_all_boids_to_new_positions()
-
-                Vector v1, v2, v3, ...
-		Integer m1, m2, m3, ...
-		Boid b
-
-                FOR EACH BOID b
-
-			...
-
-                        v1 = m1 * rule1(b)
-                        v2 = m2 * rule2(b)
-                        v3 = m3 * rule3(b)
-			...
-
-                        b.velocity = b.velocity + v1 + v2 + v3 + ...
-			...
-                        b.position = b.position + b.velocity
-                END
-
-        END PROCEDURE
-
-then, during the course of the simulation, simply make m1 negative to scatter the flock. Setting m1 to a positive value again will cause the flock to spontaneously re-form.
-Tendency away from a particular place
-
-If, on the other hand, we want the flock to continue the flocking behaviour but to move away from a particular place or object (such as a predator), then we need to move each boid individually away from that point. The calculation required is identical to that of moving towards a particular place, implemented above as tend_to_place; all that is required is a negative multiplier:
-
-			Vector v
-			Integer m
-			Boid b
-
-			...
-
-			v = -m * tend_to_place(b)
-
-So we see that each of the extra routines are very simple to implement, as are the initial rules. We achieve complex, life-like behaviour by combining all of them together. By varying the influence of each rule over time we can change the behaviour of the flock to respond to events in the environment such as sounds, currents and predators.
-
-Auxiliary functions
-
-You will find it handy to set up a set of Vector manipulation routines first to do addition, subtraction and scalar multiplication and division. For example, all the additions and subtractions in the above pseudocode are vector operations, so for example the line:
-
-			pcJ = pcJ + b.position
-
-will end up looking something like:
-
-			pcJ = Vector_Add(pcJ, b.position)
-
-where Vector_Add is a procedure defined thus:
-
-	PROCEDURE Vector_Add(Vector v1, Vector v2)
-
-		Vector v
-
-		v.x = v1.x + v2.x
-		v.y = v1.y + v2.y
-		v.z = v1.z + v2.z
-
-		RETURN v
-
-	END PROCEDURE
-
-and the line:
-
-			pcJ = pcJ / N-1
-
-will be something like:
-
-			pcJ = Vector_Div(pcJ, N-1)
-
-where Vector_Div is a scalar division:
-
-	PROCEDURE Vector_Div(Vector v1, Integer A)
-
-		Vector v
-
-		v.x = v1.x / A
-		v.y = v1.y / A
-		v.z = v1.z / A
-
-		RETURN v
-
-	END PROCEDURE
-
-Of course if you're doing this in two dimensions you won't need the z-axis terms, and if you're doing this in more than three dimensions you'll need to add more terms :) 
-         */
+        // This can easly be achieved by playing with the m1 m2 m3 values. Changing them slowly over time creates a more interesting behaivor
     }
+    
 
     private void OnDrawGizmos()
     {
+        if(!drawGizmos) return;
+
         Gizmos.color = Color.blue;
         Gizmos.DrawCube(new Vector3(0, 0, 0), new Vector3(Xmin - 10, Ymin - 10, Zmin - 10));
 
@@ -415,6 +341,7 @@ Of course if you're doing this in two dimensions you won't need the z-axis terms
 
 public class Boid
 {
+    public GameObject boidPrefab;
     public Vector3 position;
     public Vector3 velocity = new Vector3(Random.value, Random.value, Random.value);
     public bool isPerching = false;
